@@ -27,9 +27,10 @@
     <div><dt>偏远附加</dt><dd class="num">{{ amounts.parts.remote|money }}</dd></div>
     <div><dt>燃油附加</dt><dd class="num">{{ amounts.parts.fuel|money }}</dd></div>
     <div><dt>保价费</dt><dd class="num">{{ amounts.parts.insurance|money }}</dd></div>
+    <div><dt>旺季加价</dt><dd class="num">{{ amounts.parts.peak|money }}</dd></div>
     <div class="sum"><dt>应收合计</dt><dd class="num">{{ amounts.total|money }}</dd></div>
   </dl>
-  <div class="stack" data-stack='{{ {"基础": amounts.parts.base, "续重": amounts.parts.step, "偏远": amounts.parts.remote, "燃油": amounts.parts.fuel, "保价": amounts.parts.insurance} | tojson(0) }}'></div>
+  <div class="stack" data-stack='{{ {"基础": amounts.parts.base, "续重": amounts.parts.step, "偏远": amounts.parts.remote, "燃油": amounts.parts.fuel, "保价": amounts.parts.insurance, "旺季": amounts.parts.peak} | tojson(0) }}'></div>
   <p class="meta">分项之和与应收{{ "相等" if amounts.conserved else "不等" }}</p>
 </section>
 
@@ -42,7 +43,7 @@
   <table class="grid">
     <thead>
       <tr><th>运单号</th><th class="num">基础</th><th class="num">续重</th><th class="num">偏远</th>
-        <th class="num">燃油</th><th class="num">保价</th><th class="num">应收</th><th>版本</th><th>标记</th></tr>
+        <th class="num">燃油</th><th class="num">保价</th><th class="num">旺季</th><th class="num">应收</th><th>版本</th><th>标记</th></tr>
     </thead>
     <tbody>
       {% for row in lines %}
@@ -53,6 +54,7 @@
         <td class="num">{{ row.remote_amount|money }}</td>
         <td class="num">{{ row.fuel_amount|money }}</td>
         <td class="num">{{ row.insurance_amount|money }}</td>
+        <td class="num">{{ row.peak_amount|money }}</td>
         <td class="num strong">{{ row.total_amount|money }}</td>
         <td class="mono dim">{{ row.version_id }}</td>
         <td class="mono dim">{{ row.codes }}</td>

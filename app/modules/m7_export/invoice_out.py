@@ -1,4 +1,8 @@
-"""账单导出与运行清单：账单明细、按承运商汇总、可复算的清单 JSON。"""
+"""账单导出与运行清单：账单明细、按承运商汇总、可复算的清单 JSON。
+
+对外发票只取 M8 裁决为 final 且已出票的运单；pending/stale 一律不进账单 CSV，
+保证「无法排除歧义时不能对外发布」。
+"""
 
 from __future__ import annotations
 
@@ -10,11 +14,12 @@ from decimal import Decimal
 from app import config, manifest, store
 from app.modules.m6_reconcile import service as reconcile_service
 from app.modules.m7_export import csv_out
+from app.modules.m8_settlement import engine
 
 INVOICE_HEADER = [
     "waybill_no", "carrier", "service", "zone", "pickup_utc", "billable_kg",
     "version_id", "base_amount", "step_amount", "remote_amount", "fuel_amount",
-    "insurance_amount", "total_amount", "currency",
+    "insurance_amount", "peak_amount", "total_amount", "bill_no", "currency",
 ]
 
 
@@ -24,12 +29,33 @@ def currency_of() -> str:
     return "CNY"
 
 
+def publishable_waybills(run_id: str) -> set[str]:
+    """M8 裁决为 final、票号非空、且运价指纹仍是当前指纹的运单。"""
+    current_digest = _current_digest()
+    allowed: set[str] = set()
+    for row in store.decisions(run_id):
+        if (row["decision_status"] == engine.FINAL and row["bill_no"]
+                and row["rate_digest"] == current_digest):
+            allowed.add(row["waybill_no"])
+    return allowed
+
+
+def _current_digest() -> str:
+    from app.modules.m2_rates import service as rates
+    return rates.rate_digest()
+
+
 def invoice_rows(run_id: str) -> list[dict]:
     currency = currency_of()
+    allowed = publishable_waybills(run_id)
+    decisions = {d["waybill_no"]: d for d in store.decisions(run_id)}
     rows = []
     for row in csv_out.rows(run_id):
         if not row["total_amount"]:
             continue
+        if row["waybill_no"] not in allowed:
+            continue
+        decision = decisions.get(row["waybill_no"], {})
         rows.append({
             "waybill_no": row["waybill_no"],
             "carrier": row["carrier"],
@@ -43,7 +69,9 @@ def invoice_rows(run_id: str) -> list[dict]:
             "remote_amount": row["remote_amount"],
             "fuel_amount": row["fuel_amount"],
             "insurance_amount": row["insurance_amount"],
+            "peak_amount": row.get("peak_amount", "0.00"),
             "total_amount": row["total_amount"],
+            "bill_no": decision.get("bill_no", ""),
             "currency": currency,
         })
     return rows
@@ -81,8 +109,10 @@ def carrier_summary(run_id: str) -> list[dict]:
 
 
 def manifest_doc(run_id: str) -> dict:
+    from app.modules.m8_settlement import service as settlement_service
     run = store.get_run(run_id) or {}
     report = reconcile_service.reconcile(run_id)
+    decision_summary = settlement_service.summary(run_id)
     doc = manifest.build(run, {
         "rows": {
             "input": int(run.get("rows_in") or 0),
@@ -94,6 +124,13 @@ def manifest_doc(run_id: str) -> dict:
             "conserved": report["conserved"],
         },
         "reconcile": report["verdict"],
+        "settlement": {
+            "final": decision_summary["final"],
+            "pending": decision_summary["pending"],
+            "stale": decision_summary["stale"],
+            "publishable": decision_summary["publishable"],
+            "rate_digest": decision_summary["rate_digest"],
+        },
         "rate_set_version": store.max_rate_set_version(),
         "params": {"profile": config.PROFILE, "quant": "0.01", "step": "0.5"},
         "export": {"invoice_rows": len(invoice_rows(run_id))},

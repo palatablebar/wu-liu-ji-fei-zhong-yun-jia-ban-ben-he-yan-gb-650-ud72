@@ -60,3 +60,40 @@ async def api_import(file: UploadFile | None = File(default=None),
         path = config.SAMPLE_DIR / name
         raw = path.read_bytes() if path.exists() else b""
     return {"ok": True, "result": service.import_rate_set(raw, name)}
+
+
+@router.get("/api/peak-rules")
+def api_peak_rules():
+    return {
+        "ok": True,
+        "count": len(service.peak_rules()),
+        "rules": service.peak_rules(),
+        "overlaps": service.peak_overlaps(),
+        "digest": service.rate_digest(),
+    }
+
+
+@router.post("/api/peak-rules/audit")
+async def api_peak_audit(file: UploadFile | None = File(default=None),
+                         sample: str = Form(default=config.SAMPLE_PEAK_RATES)):
+    if file is not None and file.filename:
+        raw = await file.read()
+        name = file.filename
+    else:
+        name = sample
+        path = config.SAMPLE_DIR / name
+        raw = path.read_bytes() if path.exists() else b""
+    return {"ok": True, "report": service.audit_peak(raw, name)}
+
+
+@router.post("/api/peak-rules/import")
+async def api_peak_import(file: UploadFile | None = File(default=None),
+                          sample: str = Form(default=config.SAMPLE_PEAK_RATES)):
+    if file is not None and file.filename:
+        raw = await file.read()
+        name = file.filename
+    else:
+        name = sample
+        path = config.SAMPLE_DIR / name
+        raw = path.read_bytes() if path.exists() else b""
+    return {"ok": True, "result": service.import_peak_rules(raw, name)}

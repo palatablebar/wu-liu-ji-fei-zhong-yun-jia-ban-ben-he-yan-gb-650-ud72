@@ -73,4 +73,4 @@ templates.env.filters["money"] = fmt_money
 templates.env.filters["kg"] = fmt_kg
 templates.env.filters["local"] = fmt_local
 templates.env.globals["rule"] = rule
-templates.env.globals["addon_order"] = ("base", "step", "remote", "fuel", "insurance")
+templates.env.globals["addon_order"] = ("base", "step", "remote", "fuel", "insurance", "peak")

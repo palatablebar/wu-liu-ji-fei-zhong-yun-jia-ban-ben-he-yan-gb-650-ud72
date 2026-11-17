@@ -12,12 +12,13 @@ PART_FIELDS = (
     ("remote", "remote_amount", "偏远附加"),
     ("fuel", "fuel_amount", "燃油附加"),
     ("insurance", "insurance_amount", "保价费"),
+    ("peak", "peak_amount", "旺季加价"),
 )
 
 
 def parts_of(charge_rows: list[dict]) -> dict:
     return {
-        key: total([Decimal(row[field]) for row in charge_rows])
+        key: total([Decimal(row.get(field, "0")) for row in charge_rows])
         for key, field, _label in PART_FIELDS
     }
 

@@ -52,5 +52,35 @@
 
 ## 原因码
 
-原因码只在 `app/reasons.py` 定义，分两级：`block` 表示该行不进计费，`info` 表示只做标记。
+原因码只在 `app/reasons.py` 定义，分两级：`block` 表示该行不进计费或不可发布，`info` 表示只做标记。
 每条隔离都带原始行号与原因码，可导出 CSV 复核。
+
+结算裁决相关原因码：
+
+| 代码 | 级别 | 含义 |
+|---|---|---|
+| RATE_MISSING | block | 基础运价无命中，无计费依据，挂起不发布 |
+| PEAK_MISSING | info | 该分区无旺季加价规则（旺季加价可选，不阻断计费） |
+| BASE_CONFLICT / PEAK_CONFLICT | block | 同 kind 两条以上规则同时命中，歧义挂起，不可对外发布 |
+| RULE_SUPERSEDED | info | 规则在候选中但同类另一条被采用（含人工裁决未选） |
+| RULE_OUT_OF_WINDOW | info | 规则不在运单提货时刻的生效窗口，未采用 |
+| PEAK_APPLIED | info | 旺季加价已计入应收 |
+| MANUAL_RESOLVED | info | 挂起票经人工在候选规则中裁决后采用 |
+| RESULT_STALE | block | 运价指纹变化，原裁决失效，必须重算 |
+| DECISION_PENDING | block | 裁决挂起，未对外发布 |
+
+## 结算裁决状态机
+
+- `final`：每 kind 至多一条采用规则，证据闭合，可生成票号并对外发布
+- `pending`：存在同 kind 多命中或缺基础运价；票号为空，发票排除，只能人工裁决
+- `stale`：裁决保存的 `rate_digest` 与当前运价指纹不一致；旧票置 void，重算后按新指纹出新票
+- 票号：`BILL-` + sha256(`run_id|waybill_no|rate_digest`) 前 12 位，同输入重试必得同票号
+
+## 旺季加价规则表（peak_rules）
+
+列契约：`carrier,service,zone,rule_id,effective_from,effective_to,charge_type,charge_value,currency,rate_set_version`。
+
+- 窗口同样为半开 `[effective_from, effective_to)`，时区口径与基础运价一致
+- `charge_type=percent` 时 `8.5%`、`8.5`、`0.085` 都归一为小数 0.085，按基础+续重小计收取
+- `charge_type=fixed` 时为固定金额，量化到 0.01 元
+- 同承运商/服务/分区的同类规则区间相交，装载期即拒绝（RATE_OVERLAP）；与基础运价异类相交允许

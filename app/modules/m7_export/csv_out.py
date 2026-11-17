@@ -12,12 +12,13 @@ HEADER = [
     "line_no", "waybill_no", "carrier", "service", "zone", "pickup_utc",
     "actual_kg", "volumetric_kg", "source", "billable_kg", "steps", "version_id",
     "base_amount", "step_amount", "remote_amount", "fuel_amount", "insurance_amount",
-    "total_amount", "reason_codes", "reason_labels",
+    "peak_amount", "total_amount", "decision_status", "bill_no",
+    "reason_codes", "reason_labels",
 ]
 
 
 def _merge_codes(*groups) -> list[str]:
-    """计费重与账单两段的原因码合并，保持首次出现顺序。"""
+    """计费重、账单与裁决三段的原因码合并，保持首次出现顺序。"""
     merged: list[str] = []
     for group in groups:
         for code in (group or "").split(","):
@@ -30,11 +31,13 @@ def rows(run_id: str) -> list[dict]:
     waybills = {row["waybill_no"]: row for row in store.waybills(run_id)}
     weights = {row["waybill_no"]: row for row in store.weight_lines(run_id)}
     charges = {row["waybill_no"]: row for row in store.charge_lines(run_id)}
+    decisions = {row["waybill_no"]: row for row in store.decisions(run_id)}
     merged: list[dict] = []
     for waybill_no, weight in weights.items():
         waybill = waybills.get(waybill_no, {})
         charge = charges.get(waybill_no, {})
-        codes = _merge_codes(weight.get("codes"), charge.get("codes"))
+        decision = decisions.get(waybill_no, {})
+        codes = _merge_codes(weight.get("codes"), charge.get("codes"), decision.get("codes"))
         merged.append({
             "line_no": waybill.get("line_no", 0),
             "waybill_no": waybill_no,
@@ -53,7 +56,10 @@ def rows(run_id: str) -> list[dict]:
             "remote_amount": charge.get("remote_amount", "0.00"),
             "fuel_amount": charge.get("fuel_amount", "0.00"),
             "insurance_amount": charge.get("insurance_amount", "0.00"),
+            "peak_amount": charge.get("peak_amount", "0.00"),
             "total_amount": charge.get("total_amount", "0.00"),
+            "decision_status": decision.get("decision_status", ""),
+            "bill_no": decision.get("bill_no", ""),
             "reason_codes": " ".join(codes),
             "reason_labels": " ".join(label(c) for c in codes),
         })

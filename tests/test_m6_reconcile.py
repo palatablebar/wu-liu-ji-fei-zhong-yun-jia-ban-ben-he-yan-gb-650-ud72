@@ -35,7 +35,7 @@ def test_amount_account_parts(pipeline):
     account = _accounts(pipeline["run_id"])["amount"]
     assert str(account["left_value"]) == AMOUNT_TOTAL
     labels = {"基础运费": "base", "续重运费": "step", "偏远附加": "remote",
-              "燃油附加": "fuel", "保价费": "insurance"}
+              "燃油附加": "fuel", "保价费": "insurance", "旺季加价": "peak"}
     got = {labels[part["label"]]: str(part["value"]) for part in account["parts"]}
     assert got == PARTS
     assert account["balanced"] is True

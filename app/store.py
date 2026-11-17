@@ -99,11 +99,66 @@ CREATE TABLE IF NOT EXISTS charge_lines (
   remote_amount TEXT NOT NULL DEFAULT '0.00',
   fuel_amount TEXT NOT NULL DEFAULT '0.00',
   insurance_amount TEXT NOT NULL DEFAULT '0.00',
+  peak_amount TEXT NOT NULL DEFAULT '0.00',
   total_amount TEXT NOT NULL DEFAULT '0.00',
   codes TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (run_id, waybill_no)
 );
+CREATE TABLE IF NOT EXISTS peak_rules (
+  carrier TEXT NOT NULL,
+  service TEXT NOT NULL,
+  zone TEXT NOT NULL,
+  rule_id TEXT NOT NULL,
+  effective_from TEXT NOT NULL,
+  effective_to TEXT NOT NULL,
+  charge_type TEXT NOT NULL DEFAULT 'percent',
+  charge_value TEXT NOT NULL DEFAULT '0.00',
+  currency TEXT NOT NULL DEFAULT 'CNY',
+  rate_set_version INTEGER NOT NULL,
+  PRIMARY KEY (carrier, service, zone, rule_id)
+);
+CREATE TABLE IF NOT EXISTS settlement_decisions (
+  run_id TEXT NOT NULL,
+  waybill_no TEXT NOT NULL,
+  decision_status TEXT NOT NULL,
+  rate_digest TEXT NOT NULL DEFAULT '',
+  rate_set_version INTEGER NOT NULL DEFAULT 0,
+  base_rule_id TEXT NOT NULL DEFAULT '',
+  peak_rule_id TEXT NOT NULL DEFAULT '',
+  total_amount TEXT NOT NULL DEFAULT '0.00',
+  currency TEXT NOT NULL DEFAULT 'CNY',
+  evidence TEXT NOT NULL DEFAULT '[]',
+  codes TEXT NOT NULL DEFAULT '',
+  bill_no TEXT NOT NULL DEFAULT '',
+  decided_at TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (run_id, waybill_no)
+);
+CREATE TABLE IF NOT EXISTS invoice_bills (
+  bill_no TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  waybill_no TEXT NOT NULL,
+  rate_digest TEXT NOT NULL DEFAULT '',
+  total_amount TEXT NOT NULL DEFAULT '0.00',
+  currency TEXT NOT NULL DEFAULT 'CNY',
+  status TEXT NOT NULL DEFAULT 'issued',
+  created_at TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (bill_no)
+);
 """
+
+# 老库可能缺新列：按列名幂等补齐，补列只给默认值，不改历史行语义。
+_COLUMN_PATCHES = {
+    "charge_lines": [("peak_amount", "TEXT NOT NULL DEFAULT '0.00'")],
+}
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, patches in _COLUMN_PATCHES.items():
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        for name, decl in patches:
+            if table in {r["name"] for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'").fetchall()} and name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
 
 def connect() -> sqlite3.Connection:
@@ -128,6 +183,7 @@ def session():
 def init_db() -> None:
     with session() as conn:
         conn.executescript(SCHEMA)
+        _migrate(conn)
 
 
 def rows(sql: str, params: tuple = ()) -> list[dict]:
@@ -312,13 +368,14 @@ def replace_charge_lines(run_id: str, items: list[dict]) -> None:
         conn.execute("DELETE FROM charge_lines WHERE run_id = ?", (run_id,))
         conn.executemany(
             "INSERT INTO charge_lines (run_id, waybill_no, version_id, base_amount, step_amount, "
-            "remote_amount, fuel_amount, insurance_amount, total_amount, codes) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "remote_amount, fuel_amount, insurance_amount, peak_amount, total_amount, codes) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 (
                     run_id, it["waybill_no"], it["version_id"], it["base_amount"],
                     it["step_amount"], it["remote_amount"], it["fuel_amount"],
-                    it["insurance_amount"], it["total_amount"], it["codes"],
+                    it["insurance_amount"], it.get("peak_amount", "0.00"),
+                    it["total_amount"], it["codes"],
                 )
                 for it in items
             ],
@@ -332,3 +389,146 @@ def charge_lines(run_id: str) -> list[dict]:
 def latest_run_id() -> str:
     got = one("SELECT run_id FROM runs ORDER BY created_at DESC, run_id DESC LIMIT 1")
     return got["run_id"] if got else ""
+
+
+# --- 旺季加价规则 ----------------------------------------------------------
+
+PEAK_COLUMNS = (
+    "carrier", "service", "zone", "rule_id", "effective_from", "effective_to",
+    "charge_type", "charge_value", "currency", "rate_set_version",
+)
+
+
+def replace_peak_rules(items: list[dict]) -> None:
+    with session() as conn:
+        conn.execute("DELETE FROM peak_rules")
+        if items:
+            conn.executemany(
+                f"INSERT INTO peak_rules ({', '.join(PEAK_COLUMNS)}) "
+                f"VALUES ({', '.join('?' for _ in PEAK_COLUMNS)})",
+                [tuple(item[c] for c in PEAK_COLUMNS) for item in items],
+            )
+
+
+def peak_rules() -> list[dict]:
+    return rows("SELECT * FROM peak_rules ORDER BY carrier, service, zone, effective_from")
+
+
+# --- 结算裁决 --------------------------------------------------------------
+
+DECISION_COLUMNS = (
+    "waybill_no", "decision_status", "rate_digest", "rate_set_version",
+    "base_rule_id", "peak_rule_id", "total_amount", "currency",
+    "evidence", "codes", "bill_no", "decided_at",
+)
+
+
+def replace_decisions(run_id: str, items: list[dict]) -> None:
+    """整批重算：先清旧裁决再写新裁决，保证同 run_id 一票一行、无重复。"""
+    with session() as conn:
+        conn.execute("DELETE FROM settlement_decisions WHERE run_id = ?", (run_id,))
+        if items:
+            conn.executemany(
+                f"INSERT INTO settlement_decisions (run_id, {', '.join(DECISION_COLUMNS)}) "
+                f"VALUES (?, {', '.join('?' for _ in DECISION_COLUMNS)})",
+                [(run_id,) + tuple(item[c] for c in DECISION_COLUMNS) for item in items],
+            )
+
+
+def decisions(run_id: str) -> list[dict]:
+    return rows(
+        "SELECT * FROM settlement_decisions WHERE run_id = ? ORDER BY waybill_no", (run_id,)
+    )
+
+
+def decision(run_id: str, waybill_no: str) -> dict | None:
+    return one(
+        "SELECT * FROM settlement_decisions WHERE run_id = ? AND waybill_no = ?",
+        (run_id, waybill_no),
+    )
+
+
+def update_decision(run_id: str, waybill_no: str, fields: dict) -> None:
+    if not fields:
+        return
+    keys = tuple(fields)
+    assignments = ", ".join(f"{key} = ?" for key in keys)
+    execute(
+        f"UPDATE settlement_decisions SET {assignments} "
+        "WHERE run_id = ? AND waybill_no = ?",
+        tuple(fields[key] for key in keys) + (run_id, waybill_no),
+    )
+
+
+def mark_stale_by_digest(digest: str) -> int:
+    """运价更新后，旧 digest 的非失效裁决一律置 stale，并摘票防重复出票。
+
+    同时挂上 RESULT_STALE 原因码，让失效状态在证据 CSV 里可解释。
+    """
+    with session() as conn:
+        cur = conn.execute(
+            "UPDATE settlement_decisions SET decision_status = 'stale', bill_no = '', "
+            "codes = CASE WHEN codes LIKE '%RESULT_STALE%' THEN codes "
+            "ELSE codes || CASE WHEN codes = '' THEN '' ELSE ',' END || 'RESULT_STALE' END "
+            "WHERE rate_digest = ? AND decision_status != 'stale'",
+            (digest,),
+        )
+        changed = cur.rowcount
+        conn.execute(
+            "UPDATE invoice_bills SET status = 'void' WHERE rate_digest = ? AND status = 'issued'",
+            (digest,),
+        )
+        return changed
+
+
+def void_run_bills_not_in(run_id: str, live_bill_nos: set[str]) -> int:
+    """重算后摘除本 run 中已不在 final 集合里的旧票，防止孤儿账单对外发布。"""
+    with session() as conn:
+        rows = conn.execute(
+            "SELECT bill_no FROM invoice_bills WHERE run_id = ? AND status = 'issued'",
+            (run_id,),
+        ).fetchall()
+        stale = [row["bill_no"] for row in rows if row["bill_no"] not in live_bill_nos]
+        if stale:
+            conn.executemany(
+                "UPDATE invoice_bills SET status = 'void' WHERE bill_no = ?",
+                [(bill_no,) for bill_no in stale],
+            )
+        return len(stale)
+
+
+# --- 账单票号 --------------------------------------------------------------
+
+def upsert_bill(bill: dict) -> None:
+    with session() as conn:
+        existing = conn.execute(
+            "SELECT bill_no FROM invoice_bills WHERE bill_no = ?", (bill["bill_no"],)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE invoice_bills SET run_id = ?, waybill_no = ?, rate_digest = ?, "
+                "total_amount = ?, currency = ?, status = ? WHERE bill_no = ?",
+                (bill["run_id"], bill["waybill_no"], bill["rate_digest"],
+                 bill["total_amount"], bill["currency"], bill.get("status", "issued"),
+                 bill["bill_no"]),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO invoice_bills (bill_no, run_id, waybill_no, rate_digest, "
+                "total_amount, currency, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (bill["bill_no"], bill["run_id"], bill["waybill_no"], bill["rate_digest"],
+                 bill["total_amount"], bill["currency"], bill.get("status", "issued"),
+                 bill["created_at"]),
+            )
+
+
+def bills(run_id: str = "") -> list[dict]:
+    if run_id:
+        return rows(
+            "SELECT * FROM invoice_bills WHERE run_id = ? ORDER BY bill_no", (run_id,)
+        )
+    return rows("SELECT * FROM invoice_bills ORDER BY bill_no")
+
+
+def bill_by_no(bill_no: str) -> dict | None:
+    return one("SELECT * FROM invoice_bills WHERE bill_no = ?", (bill_no,))

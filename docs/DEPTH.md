@@ -15,6 +15,7 @@
 | M5 分区附加 | 看首重、续重、偏远、燃油、保价与应收 | POST /api/charges | `app/modules/m5_charges/handler.py` `app/modules/m5_charges/service.py` `app/modules/m5_charges/zone.py` `app/modules/m5_charges/addon.py` `app/modules/m5_charges/money.py` | `tests/test_m5_charges.py` |
 | M6 账单对账 | 看四账是否相等，差在哪一项 | GET /api/reconcile | `app/modules/m6_reconcile/handler.py` `app/modules/m6_reconcile/service.py` `app/modules/m6_reconcile/compare.py` `app/modules/m6_reconcile/totals.py` `app/modules/m6_reconcile/explain.py` | `tests/test_m6_reconcile.py` |
 | M7 导出 | 导出账单、证据行与可复算的运行清单 | GET /api/export/invoice.csv | `app/modules/m7_export/handler.py` `app/modules/m7_export/service.py` `app/modules/m7_export/csv_out.py` `app/modules/m7_export/invoice_out.py` | `tests/test_m7_export.py` |
+| M8 结算裁决 | 多规则命中分组裁决、歧义挂起、人工裁决、失效重算与幂等出票 | POST /api/settlement/run | `app/modules/m8_settlement/handler.py` `app/modules/m8_settlement/service.py` `app/modules/m8_settlement/engine.py` `app/modules/m8_settlement/peak.py` `app/modules/m8_settlement/billing.py` | `tests/test_m8_settlement.py` |
 
 ## 陷阱登记
 
@@ -33,14 +34,18 @@
 | TRAP-24 | 各分项各自四舍五入 | 分项之和与应收差一分钱 | 分项先量化到分，应收由分项求和得出 | `app/modules/m5_charges/money.py` | `tests/test_m5_charges.py` |
 | TRAP-25 | 同分区两版生效区间相交 | 取到哪版看运气，同一票时高时低 | 先检测重叠，重叠即整份运价集拒绝装载 | `app/modules/m2_rates/version.py` | `tests/test_m2_rates.py` |
 | TRAP-26 | 用旧运价集重新提交 | 旧价覆盖新价，已出账单金额回退 | 运价集版本号比较，低于现有版本直接拒绝 | `app/modules/m2_rates/service.py` | `tests/test_m2_rates.py` |
+| TRAP-27 | 承运商把全国底价与分区旺季加价放在同一时段 | 规则一相撞就整批拒收，晚班无法出账；或随便选一条，页面金额与账单依据不一致 | 规则按 base/peak 分 kind，异类共存；每票全部命中规则落证据，同 kind 多命中置 pending 不发布，人工只能在候选规则中裁决 | `app/modules/m8_settlement/engine.py` `app/modules/m8_settlement/service.py` | `tests/test_m8_settlement.py` |
+| TRAP-28 | 运价规则更新后沿用旧裁决出账 | 账单依据已失效，金额对不上新运价 | 裁决保存 rate_digest，运价更新即把旧 digest 裁决置 stale、已发票置 void；重算前发票为空 | `app/store.py` `app/modules/m2_rates/service.py` | `tests/test_m8_settlement.py` |
+| TRAP-29 | 重试结算接口重复生成账单 | 一票多票号，对外应收翻倍 | 票号由 run_id+运单号+rate_digest 确定性生成，upsert 出票且重算先摘旧票，重试不产生第二张票 | `app/modules/m8_settlement/billing.py` `app/modules/m8_settlement/service.py` | `tests/test_m8_settlement.py` |
 
 ## 对账规则
 
 - 运单行账：采信记录 = 计费 + 隔离（有未计费行时单列第三项）
-- 金额账：应收合计 = 基础运费 + 续重运费 + 偏远附加 + 燃油附加 + 保价费（Decimal，分）
+- 金额账：应收合计 = 基础运费 + 续重运费 + 偏远附加 + 燃油附加 + 保价费 + 旺季加价（Decimal，分）
 - 版本账：可计费运单 = 单选命中 + 无命中或重叠
 - 计费重账：计费行数 = 实重择用 + 体积重择用
 - 重跑：同一份输入得到同一个 run_id，行数与合计不变
+- 发布账：只有 final 裁决进发票；pending（歧义）与 stale（失效）一律排除，且票号状态为 issued
 
 ## 已知不覆盖
 

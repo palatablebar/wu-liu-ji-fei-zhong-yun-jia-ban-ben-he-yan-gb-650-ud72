@@ -19,6 +19,8 @@ from app.modules.m5_charges import service as charge_service
 from app.modules.m5_charges.handler import router as charges_router
 from app.modules.m6_reconcile.handler import router as reconcile_router
 from app.modules.m7_export.handler import router as export_router
+from app.modules.m8_settlement.handler import router as settlement_router
+from app.modules.m8_settlement import service as settlement_service
 
 
 def bootstrap() -> dict:
@@ -35,6 +37,9 @@ def bootstrap() -> dict:
         row = store.get_run(run_id) or {}
         if "charges" not in (row.get("stages") or ""):
             charge_service.compute_charges(run_id)
+        row = store.get_run(run_id) or {}
+        if "settle" not in (row.get("stages") or ""):
+            settlement_service.settle(run_id)
     return {"rates": seeded, "run": run}
 
 
@@ -56,6 +61,7 @@ for router in (
     charges_router,
     reconcile_router,
     export_router,
+    settlement_router,
 ):
     app.include_router(router)
 

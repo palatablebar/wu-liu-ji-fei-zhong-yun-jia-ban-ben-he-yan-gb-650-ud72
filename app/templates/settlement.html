@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}结算裁决{% endblock %}
+{% block body %}
+<section class="head">
+  <h1>结算裁决</h1>
+  <p class="meta">
+    可发布 {{ summary.publishable or 0 }} 票 · 挂起 {{ summary.pending or 0 }} 票 ·
+    失效 {{ summary.stale or 0 }} 票 · 可发布应收 {{ summary.amount_total|money }} 元
+  </p>
+</section>
+
+<div class="rule-line">{{ rule(200) }}</div>
+
+<section class="block">
+  <form class="cmd" data-post="/api/settlement/run" data-target="#settle-out" data-reload="1">
+    <button type="submit" class="btn">重算裁决</button>
+    <span class="dim">同输入同运价指纹必得同票号；重试不重复出票，运价更新后旧票自动失效</span>
+  </form>
+  <pre id="settle-out" class="out">待裁决</pre>
+  {% if summary.stale_digest_present %}
+  <p class="err">检测到运价指纹已变化，存在失效裁决，请重算后再对外发布。</p>
+  {% endif %}
+</section>
+
+<div class="rule-line">{{ rule(200) }}</div>
+
+<section class="block">
+  <h2>待人工裁决（不可对外发布）</h2>
+  {% if pending %}
+  <table class="grid">
+    <thead>
+      <tr><th>运单号</th><th>状态</th><th>原因码</th><th>候选规则</th><th>裁决</th></tr>
+    </thead>
+    <tbody>
+      {% for d in pending %}
+      <tr>
+        <td class="mono">{{ d.waybill_no }}</td>
+        <td class="mono">{{ d.decision_status }}</td>
+        <td class="mono dim">{{ d.codes|join(' ') }}</td>
+        <td class="mono dim">
+          {% for e in d.evidence if e.status == 'candidate' %}
+            {{ e.rule_kind }}:{{ e.rule_id }} ({{ e.reason_code }})<br>
+          {% endfor %}
+        </td>
+        <td>
+          {% for e in d.evidence if e.status == 'candidate' %}
+          <form class="cmd" data-post="/api/settlement/resolve" data-target="#settle-out" data-reload="1" style="display:inline-flex;gap:4px">
+            <input type="hidden" name="waybill_no" value="{{ d.waybill_no }}">
+            <input type="hidden" name="kind" value="{{ e.rule_kind }}">
+            <input type="hidden" name="rule_id" value="{{ e.rule_id }}">
+            <button type="submit" class="btn">采用 {{ e.rule_id }}</button>
+          </form>
+          {% endfor %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">没有挂起裁决。</p>
+  {% endif %}
+</section>
+
+<div class="rule-line">{{ rule(200) }}</div>
+
+<section class="block">
+  <h2>逐票裁决与规则证据</h2>
+  {% if decisions %}
+  <table class="grid">
+    <thead>
+      <tr><th>运单号</th><th>状态</th><th>基础规则</th><th>旺季规则</th>
+        <th class="num">应收</th><th>票号</th><th>命中/未采用规则依据</th></tr>
+    </thead>
+    <tbody>
+      {% for d in decisions %}
+      <tr>
+        <td class="mono">{{ d.waybill_no }}</td>
+        <td class="mono">{{ d.decision_status }}</td>
+        <td class="mono dim">{{ d.base_rule_id or '—' }}</td>
+        <td class="mono dim">{{ d.peak_rule_id or '—' }}</td>
+        <td class="num strong">{{ d.total_amount|money }}</td>
+        <td class="mono dim">{{ d.bill_no or '—' }}</td>
+        <td class="mono dim" style="text-align:left;white-space:normal;max-width:560px">
+          {% for e in d.evidence %}
+            {{ e.rule_kind }}:{{ e.rule_id }} → {{ e.status }}{% if e.reason_code %} ({{ e.reason_code }}){% endif %}<br>
+          {% endfor %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">还没有裁决，点「重算裁决」生成。</p>
+  {% endif %}
+</section>
+
+<div class="rule-line">{{ rule(200) }}</div>
+
+<section class="block">
+  <h2>已出账单（仅 final）</h2>
+  {% if bills %}
+  <table class="grid">
+    <thead>
+      <tr><th>票号</th><th>运单号</th><th class="num">金额</th><th>状态</th><th class="dim">运价指纹</th></tr>
+    </thead>
+    <tbody>
+      {% for b in bills %}
+      <tr>
+        <td class="mono">{{ b.bill_no }}</td>
+        <td class="mono">{{ b.waybill_no }}</td>
+        <td class="num strong">{{ b.total_amount|money }}</td>
+        <td class="mono">{{ b.status }}</td>
+        <td class="mono dim">{{ b.rate_digest[:12] }}…</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">还没有可发布账单。</p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -98,6 +98,8 @@ DISPLAY_TZ = "Asia/Shanghai"
 
 SAMPLE_RATES = "rate_cards.csv"
 SAMPLE_RATES_OVERLAP = "rate_cards_overlap.csv"
+SAMPLE_PEAK_RATES = "peak_rules.csv"
+SAMPLE_PEAK_CONFLICT = "peak_rules_conflict.csv"
 SAMPLE_WAYBILLS = "waybills_dirty.csv"
 SAMPLE_WAYBILLS_GB = "waybills_gb18030.csv"
 SAMPLE_WAYBILLS_TRUNC = "waybills_truncated.csv"

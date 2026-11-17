@@ -1,0 +1,6 @@
+carrier,service,zone,rule_id,effective_from,effective_to,charge_type,charge_value,currency,rate_set_version
+SF,standard,Z1,PK-SF-std-Z1-q2,2026-04-01T00:00:00Z,2026-07-01T00:00:00Z,percent,0.10,CNY,3
+SF,standard,Z3,PK-SF-std-Z3-q2,2026-04-01T00:00:00Z,2026-07-01T00:00:00Z,fixed,5.00,CNY,3
+SF,economy,Z1,PK-SF-eco-Z1-q2,2026-04-01T00:00:00Z,2026-07-01T00:00:00Z,percent,0.06,CNY,3
+JD,standard,Z2,PK-JD-std-Z2-q2,2026-04-01T00:00:00Z,2026-07-01T00:00:00Z,percent,0.08,CNY,3
+YT,standard,Z1,PK-YT-std-Z1-q2,2026-04-01T00:00:00Z,2026-07-01T00:00:00Z,percent,0.10,CNY,3

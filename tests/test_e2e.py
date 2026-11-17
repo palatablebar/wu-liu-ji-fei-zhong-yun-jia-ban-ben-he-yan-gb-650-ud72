@@ -28,12 +28,48 @@ def test_sample_flow_end_to_end(pipeline):
 
 
 def test_web_pages_return_200(client):
-    pages = ["/", "/waybills", "/weights", "/charges", "/reconcile", "/export"]
+    pages = ["/", "/waybills", "/weights", "/charges", "/settlement", "/reconcile", "/export"]
     for page in pages:
         response = client.get(page)
         assert response.status_code == 200, page
         assert "freightrate" in response.text
-    assert len(pages) == 6
+    assert len(pages) == 7
+
+
+def test_settlement_api_and_bills(client):
+    report = client.get("/api/settlement").json()
+    assert report["ok"] is True
+    assert report["summary"]["final"] == ROWS_OK
+    assert report["summary"]["pending"] == 0
+    assert report["summary"]["stale"] == 0
+    assert len(report["bills"]) == ROWS_OK
+    assert all(bill["status"] == "issued" for bill in report["bills"])
+    assert all(bill["bill_no"].startswith("BILL-") for bill in report["bills"])
+    # 每条裁决都带命中与未采用规则证据
+    for decision in report["decisions"]:
+        assert decision["decision_status"] == "final"
+        assert decision["evidence"]
+        assert decision["bill_no"]
+
+
+def test_settle_endpoint_is_idempotent(client):
+    first = client.post("/api/settlement/run").json()["summary"]
+    before = {b["bill_no"] for b in client.get("/api/bills").json()["bills"]}
+    client.post("/api/settlement/run")
+    after = {b["bill_no"] for b in client.get("/api/bills").json()["bills"]}
+    assert before == after
+    second = client.post("/api/settlement/run").json()["summary"]
+    assert first["amount_total"] == second["amount_total"]
+
+
+def test_peak_rule_endpoints(client):
+    payload = client.get("/api/peak-rules").json()
+    assert payload["ok"] is True
+    assert payload["count"] >= 1
+    audit = client.post("/api/peak-rules/audit",
+                        data={"sample": "peak_rules_conflict.csv"}).json()["report"]
+    assert audit["ok"] is False
+    assert len(audit["overlaps"]) == 1
 
 
 def test_api_health(client):
